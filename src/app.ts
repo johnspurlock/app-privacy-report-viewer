@@ -131,8 +131,10 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
         return { redirectHref: makeHref(`/${filenames[0]}`, url.searchParams) };
     }
     if (filename && !filenames.includes(filename)) return 404;
-    const lines: string[] = [];
 
+    const lines: string[] = [];
+    lines.push(`<header>Drop an app-privacy-report.json anywhere on the page to import</header>`);
+    lines.push('<main>');
     lines.push('<div>');
     renderListHtml(filenames.map(v => ({ selected: filename === v, href: makeHref(`/${v}`, url.searchParams), text: v})), lines);
     if (filename) {
@@ -179,8 +181,9 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
         lines.push('</table>');
     }
     lines.push('</div>');
+    lines.push('</main>');
+    if (filenames.length > 0) lines.push(`<footer>Underlying sqlite db: ${resolve(dbName)}</footer>`);
 
-    const defaultDropHint = 'Drop an app-privacy-report.json anywhere on the page to import';
     return `
 <html>
   <head>
@@ -294,11 +297,7 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
     </style>
   </head>
   <body id="drop_zone" ondrop="onDrop(event);" ondragover="onDragOver(event);">
-    <header>${defaultDropHint}</header>
-    <main>
     ${lines.join('\n')}
-    </main>
-    <footer>Underlying sqlite db: ${resolve(dbName)}</header>
   <body>  
 </html>
 `
