@@ -222,6 +222,7 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
             let status = 0;
             fetch('/', { method: 'POST', body: file, headers: { 'x-filename': file.name } }).then(v => { status = v.status; return v.json(); }).then(v => {
                 if (status !== 200)  {
+                    console.error('fetch failed', v.errorDetail);
                     header.textContent = v.error;
                     return;
                 }
