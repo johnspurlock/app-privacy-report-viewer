@@ -1,5 +1,6 @@
 import { serve, ServerRequest } from 'https://deno.land/std@0.98.0/http/server.ts';
 import { readAll } from 'https://deno.land/std@0.98.0/io/util.ts';
+import { resolve } from 'https://deno.land/std@0.98.0/path/mod.ts';
 import { Database } from './database.ts';
 import { importReportFile } from './importer.ts';
 import { TIMESTAMP } from './model.ts';
@@ -133,7 +134,7 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
     const lines: string[] = [];
 
     lines.push('<div>');
-    renderListHtml(filenames.map(v => ({ selected: filename === v, href: `/${v}`, text: v})), lines);
+    renderListHtml(filenames.map(v => ({ selected: filename === v, href: makeHref(`/${v}`, url.searchParams), text: v})), lines);
     if (filename) {
         const dates = db.getDates(filename);
         const dateList = dates.map(v => ({ selected: date === v, href: computeHref(url, 'date', v), text: v}));
@@ -251,7 +252,7 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
             color: blue;
         }
 
-        header {
+        header, footer {
             padding: 1rem;
             background-color: #eeeeee;
         }
@@ -297,6 +298,7 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
     <main>
     ${lines.join('\n')}
     </main>
+    <footer>Underlying sqlite db: ${resolve(dbName)}</header>
   <body>  
 </html>
 `
