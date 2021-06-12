@@ -1,6 +1,6 @@
 import { serve, ServerRequest } from 'https://deno.land/std@0.98.0/http/server.ts';
 import { readAll } from 'https://deno.land/std@0.98.0/io/util.ts';
-import { Database } from './database.ts';
+import { AccessSummary, Database, DomainSummary } from './database.ts';
 import { importReportFile } from './importer.ts';
 
 const port = 8015;
@@ -19,8 +19,14 @@ for await (const request of server) {
     try {
         if (get && new RegExp(`^/(${FILENAME})?$`).test(url.pathname)) {
             doWithDatabase(db => {
-                const body = handleHtml(db, url);
-                request.respond({ status: 200, body });
+                const result = handleHtml(db, url);
+                if (typeof result === 'string') {
+                    request.respond({ status: 200, body: result });
+                } else if (typeof result === 'number') {
+                    request.respond({ status: 404, body: 'not found' });
+                } else {
+                    request.respond({ status: 302, body: '', headers: new Headers({ 'Location': result.redirectHref }) });
+                }
             });
         } else if (post && url.pathname === '/') {
             const response = await handlePost(request);
@@ -30,7 +36,11 @@ for await (const request of server) {
         }
     } catch (e) {
         console.error(e);
-        request.respond({ status: 500, body: `${e.stack || e}` });
+        const errorObj = {
+            error: `${e}`,
+            errorDetail: `${e.stack || e}`,
+        };
+        request.respond({ status: 500, body: JSON.stringify(errorObj) });
     }
 }
 
@@ -91,58 +101,93 @@ function computeHref(url: URL, name: string, value?: string): string {
     } else {
         u.searchParams.delete(name);
     }
-    let rt = u.pathname;
-    if ([...u.searchParams.keys()].length > 0) {
-        rt += '?' + u.searchParams.toString();
+    return makeHref(u.pathname, u.searchParams);
+}
+
+function makeHref(pathname: string, qp: URLSearchParams) {
+    let rt = pathname;
+    if ([...qp.keys()].length > 0) {
+        rt += '?' + qp.toString();
     }
     return rt;
 }
 
-function handleHtml(db: Database, url: URL): string {
+function handleHtml(db: Database, url: URL): string | { redirectHref: string } | number {
     const tokens = url.pathname.split('/').filter(v => v !== '');
     const filename = tokens.length > 0 ? tokens[0] : undefined;
     const date = url.searchParams.get('date') || undefined;
-    const stream = url.searchParams.get('stream') || undefined;
+    const type = url.searchParams.get('type') || undefined;
     const bundleId = url.searchParams.get('bundleId') || undefined;
 
     const filenames = db.getFilenames();
+    if (!filename && filenames.length > 0) {
+        return { redirectHref: makeHref(`/${filenames[0]}`, url.searchParams) };
+    }
+    if (filename && !filenames.includes(filename)) return 404;
     const lines: string[] = [];
 
     lines.push('<div>');
     renderListHtml(filenames.map(v => ({ selected: filename === v, href: `/${v}`, text: v})), lines);
-
     if (filename) {
         const dates = db.getDates(filename);
         const dateList = dates.map(v => ({ selected: date === v, href: computeHref(url, 'date', v), text: v}));
-        dateList.unshift({ selected: date === undefined, href: computeHref(url, 'date'), text: 'all'});
+        dateList.unshift({ selected: date === undefined, href: computeHref(url, 'date'), text: '(all dates)'});
         renderListHtml(dateList, lines);
 
-        const streams = db.getStreams(filename);
-        const streamList = streams.map(v => ({ selected: stream === v, href: computeHref(url, 'stream', v), text: v}));
-        streamList.unshift({ selected: stream === undefined, href: computeHref(url, 'stream'), text: 'all'});
-        renderListHtml(streamList, lines);
+        const types = db.getTypes(filename);
+        const typeList = types.map(v => ({ selected: type === v, href: computeHref(url, 'type', v), text: v}));
+        typeList.unshift({ selected: type === undefined, href: computeHref(url, 'type'), text: '(all types)'});
+        renderListHtml(typeList, lines);
 
         const bundleIds = db.getBundleIds(filename);
-        const bundleList = bundleIds.map(v => ({ selected: bundleId === v, href: computeHref(url, 'bundleId', v), text: v}));
-        bundleList.unshift({ selected: bundleId === undefined, href: computeHref(url, 'bundleId'), text: 'all'});
-        renderListHtml(bundleList, lines);
+        const bundleIdList = bundleIds.map(v => ({ selected: bundleId === v, href: computeHref(url, 'bundleId', v), text: v}));
+        bundleIdList.unshift({ selected: bundleId === undefined, href: computeHref(url, 'bundleId'), text: '(all bundleIds)'});
+        renderListHtml(bundleIdList, lines);
     }
     lines.push('</div>');
     lines.push('<div id="rhs">');
     if (filename) {
-        const accessSummaries = db.getAccessSummariesByDate(filename, { date, stream, bundleId });
+
+        const accessSummariesByDate = db.getAccessSummariesByDate(filename, { date, type, bundleId });
+        const domainSummariesByDate = db.getDomainSummariesByDate(filename, { date, bundleId });
+        const combinedByDate = new Map<string, {accessSummaries?: AccessSummary[], domainSummaries?: DomainSummary[]}>();
+        for (const [date, accessSummaries] of accessSummariesByDate) {
+            const combined = combinedByDate.get(date) || {};
+            combined.accessSummaries = accessSummaries;
+            combinedByDate.set(date, combined);
+        }
+        for (const [date, domainSummaries] of domainSummariesByDate) {
+            const combined = combinedByDate.get(date) || {};
+            combined.domainSummaries = domainSummaries;
+            combinedByDate.set(date, combined);
+        }
+
         lines.push('<table>');
-        for (const date of [...accessSummaries.keys()].sort().reverse()) {
-            lines.push(`<tr><td colspan="4"><h3>${date}</h3></td></tr>`);
-            for (const summary of accessSummaries.get(date)!) {
-                lines.push(`<tr><td>${summary.timestampStart.substring(11)}</td><td>${summary.timestampEnd?.substring(11) || ''}</td><td>${summary.stream}</td><td>${summary.bundleId}</td></tr>`);
+        for (const date of [...combinedByDate.keys()].sort().reverse()) {
+            lines.push(`<tr><td colspan="5"><h3><a href="${computeHref(url, 'date', date)}">${date}</a></h3></td></tr>`);
+
+            const { accessSummaries, domainSummaries } = combinedByDate.get(date)!;
+            if (accessSummaries) {
+                for (const summary of accessSummaries) {
+                    const streamLink = `<a href="${computeHref(url, 'type', 'access/' + summary.stream)}">${summary.stream}</a>`;
+                    const bundleIdLink = `<a href="${computeHref(url, 'bundleId', summary.bundleId)}">${summary.bundleId}</a>`;
+                    lines.push(`<tr><td>${summary.timestampStart.substring(11)}</td><td>${summary.timestampEnd?.substring(11) || ''}</td><td>${bundleIdLink}</td><td></td><td>${streamLink}</td></tr>`);
+                }
             }
-            
+
+            if (domainSummaries && (type === undefined || !type.startsWith('access'))) {
+                for (const summary of domainSummaries) {
+                    const bundleIdLink = `<a href="${computeHref(url, 'bundleId', summary.bundleId)}">${summary.bundleId}</a>`;
+                    lines.push(`<tr><td>${summary.timestamp.substring(11)}</td><td></td><td>${bundleIdLink}</td><td>${summary.hits}</td><td>${summary.domain}</td></tr>`);
+                }
+            }
+        
         }
         lines.push('</table>');
     }
     lines.push('</div>');
 
+    const defaultDropHint = 'Drop an app-privacy-report.json anywhere on the page to import';
     return `
 <html>
   <head>
@@ -152,30 +197,44 @@ function handleHtml(db: Database, url: URL): string {
             event.preventDefault();
             console.log('onDrop', event);
 
-            if (event.dataTransfer.items) {
-                for (let item of event.dataTransfer.items) {
-                    if (item.kind === 'file') {
-                        processFile(item.getAsFile());
-                    } else {
-                        console.log('Bad item.kind: expected file, found ' + item.kind, item);
+            const header = document.getElementsByTagName('header')[0];
+            header.textContent = 'Importing...';
+            try {
+                if (event.dataTransfer.items) {
+                    for (let item of event.dataTransfer.items) {
+                        if (item.kind === 'file') {
+                            processFile(item.getAsFile(), header);
+                        } else {
+                            console.log('Bad item.kind: expected file, found ' + item.kind, item);
+                        }
+                    }
+                } else {
+                    for (let file of event.dataTransfer.files) {
+                        processFile(file, header);
                     }
                 }
-            } else {
-                for (let file of event.dataTransfer.files) {
-                    processFile(file);
-                }
+            } catch (e) {
+                header.textContent = e;
             }
-      }
+        }
 
-      function onDragOver(event) {
-        event.preventDefault();
-      }
+        function onDragOver(event) {
+           event.preventDefault();
+        }
 
-      function processFile(file) {
-        fetch('/', { method: 'POST', body: file, headers: { 'x-filename': file.name } }).then(v => v.json()).then(v => {
-            document.location = '/' + v.filename;
-        }).catch(e => console.error('fetch failed'));
-      }
+        function processFile(file, header) {
+            let status = 0;
+            fetch('/', { method: 'POST', body: file, headers: { 'x-filename': file.name } }).then(v => { status = v.status; return v.json(); }).then(v => {
+                if (status !== 200)  {
+                    header.textContent = v.error;
+                    return;
+                }
+                document.location = '/' + v.filename;
+            }).catch(e => {
+                console.error('fetch failed', e);
+                header.textContent = e;
+            });
+        }
     </script>
     <style>
         body {
@@ -187,19 +246,17 @@ function handleHtml(db: Database, url: URL): string {
             -webkit-font-smoothing: antialiased;
             margin: 0;
             padding: 0;
-           
-        }
-
-        body, table {
             font-size: smaller;
         }
 
-        h3 {
-            margin: 1rem 0;
+        a, a:visited {
+            text-decoration: none;
+            color: blue;
         }
 
-        #rhs {
-            margin: 0 1rem;
+        a:hover {
+            text-decoration: underline;
+            color: blue;
         }
 
         header {
@@ -210,14 +267,37 @@ function handleHtml(db: Database, url: URL): string {
         main {
             display: flex;
         }
-        
+
         li.selected {
             background-color: #eeeeee;
         }
+
+        #rhs {
+            margin: 0 1rem;
+        }
+
+        table {
+            font-size: smaller;
+            border-spacing: 1rem 0.25rem;
+        }
+
+        table a, table a:visited {
+            color: #000000;
+        }
+
+        table a:hover {
+            text-decoration: underline;
+            color: blue;
+        }
+
+        h3 {
+            margin: 1rem 0;
+        }
+
     </style>
   </head>
   <body id="drop_zone" ondrop="onDrop(event);" ondragover="onDragOver(event);">
-    <header>Drop an app-privacy-report.json anywhere on the page to import</header>
+    <header>${defaultDropHint}</header>
     <main>
     ${lines.join('\n')}
     </main>

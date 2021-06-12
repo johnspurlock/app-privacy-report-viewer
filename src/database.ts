@@ -1,13 +1,15 @@
 import { DB } from 'https://deno.land/x/sqlite@v2.4.2/mod.ts';
 import { AccessRecord, DomainRecord } from './model.ts';
 
+const VERSION = 1;
+
 export class Database {
     private readonly _db: DB;
 
     constructor(path: string) {
         this._db = new DB(path);
 
-        this._db.query(`create table if not exists access(
+        this._db.query(`create table if not exists access${VERSION}(
             filename text not null,
             line integer not null,
             stream text not null,
@@ -20,7 +22,7 @@ export class Database {
             version integer not null,
             primary key (filename, line)) without rowid`);
 
-        this._db.query(`create table if not exists domain(
+        this._db.query(`create table if not exists domain${VERSION}(
             filename text not null,
             bundleId text not null,
             domain text not null,
@@ -37,47 +39,50 @@ export class Database {
     }
 
     getFilenames(): string[] {
-        const filenames = [...this._db.query(`select distinct filename from access union select distinct filename from domain`)].map(([filename]) => filename);
+        const filenames = [...this._db.query(`select distinct filename from access${VERSION} union select distinct filename from domain${VERSION} order by filename desc`)].map(([filename]) => filename);
         return filenames;
     }
 
     getDates(filename: string) {
-        const date = [...this._db.query(`select distinct substr(timestamp, 1, 10) date from access where filename = ? union select distinct substr(timestamp, 1, 10) date from domain where filename = ? order by date desc`, [filename, filename])].map(([date]) => date);
+        const date = [...this._db.query(`select distinct substr(timestamp, 1, 10) date from access${VERSION} where filename = ? union select distinct substr(timestamp, 1, 10) date from domain${VERSION} where filename = ? order by date desc`, [filename, filename])].map(([date]) => date);
         return date;
     }
 
     getBundleIds(filename: string) {
-        const bundleId = [...this._db.query(`select distinct accessorIdentifier bundleId from access where filename = ? union select bundleId from domain where filename = ? order by bundleId`, [filename, filename])].map(([bundleId]) => bundleId);
+        const bundleId = [...this._db.query(`select distinct accessorIdentifier bundleId from access${VERSION} where filename = ? union select bundleId from domain${VERSION} where filename = ? order by bundleId`, [filename, filename])].map(([bundleId]) => bundleId);
         return bundleId;
     }
 
-    getStreams(filename: string): string[] {
-        const streams = [...this._db.query(`select distinct stream, tccService from access where filename = ? order by stream, tccService`, [filename])].map(([stream, tccService]) => computeStream(stream, tccService));
-        return streams;
+    getTypes(filename: string): string[] {
+        const streams = [...this._db.query(`select distinct stream, tccService from access${VERSION} where filename = ? order by stream, tccService`, [filename])].map(([stream, tccService]) => computeStream(stream, tccService));
+        const rt = streams.map(v => `access/${v}`);
+        rt.unshift('access');
+        rt.push('domains');
+        return rt;
     }
 
     clearAccess(filename: string) {
-        this._db.query('delete from access where filename = ?', [ filename ]);
+        this._db.query(`delete from access${VERSION} where filename = ?`, [ filename ]);
     }
 
     insertAccess(filename: string, line: number, record: AccessRecord) {
-        this._db.query('insert into access(filename, line, stream, accessorIdentifier, accessorIdentifierType, tccService, identifier, kind, timestamp, version) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        this._db.query(`insert into access${VERSION}(filename, line, stream, accessorIdentifier, accessorIdentifierType, tccService, identifier, kind, timestamp, version) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [filename, line, record.stream, record.accessor.identifier, record.accessor.identifierType, record.tccService, record.identifier, record.kind, record.timestamp, record.version]);
         if (this._db.changes !== 1) throw new Error(`Failed to insert access record`);
     }
 
     clearDomain(filename: string) {
-        this._db.query('delete from domain where filename = ?', [ filename ]);
+        this._db.query(`delete from domain${VERSION} where filename = ?`, [ filename ]);
     }
 
     insertDomain(filename: string, bundleId: string, record: DomainRecord) {
-        this._db.query('insert into domain(filename, bundleId, domain, effectiveUserId, domainType, timeStamp, hasAppBundleName, context, hits, domainOwner, initiatedType, firstTimeStamp) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
+        this._db.query(`insert into domain${VERSION}(filename, bundleId, domain, effectiveUserId, domainType, timeStamp, hasAppBundleName, context, hits, domainOwner, initiatedType, firstTimeStamp) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
                     [filename, bundleId, record.domain, record.effectiveUserId, record.domainType, record.timeStamp, record['hasApp.bundleName'], record.context, record.hits, record.domainOwner, record.initiatedType, record.firstTimeStamp]);
         if (this._db.changes !== 1) throw new Error(`Failed to insert domain record`);
     }
 
-    getAccessSummariesByDate(filename: string, opts: { date?: string, stream?: string, bundleId?: string } = {}): Map<string, AccessSummary[]> {
-        const rows = this._db.query('select stream, tccService, accessorIdentifier, timestamp, identifier, kind from access where filename = ?', [ filename ]);
+    getAccessSummariesByDate(filename: string, opts: { date?: string, type?: string, bundleId?: string } = {}): Map<string, AccessSummary[]> {
+        const rows = this._db.query(`select stream, tccService, accessorIdentifier, timestamp, identifier, kind from access${VERSION} where filename = ?`, [ filename ]);
 
         const summariesByIdentifier = new Map<string, AccessSummary>();
         for (const [stream, tccService, accessorIdentifier, timestamp, identifier, kind] of rows) {
@@ -99,7 +104,7 @@ export class Database {
         for (const summary of summariesByIdentifier.values()) {
             const date = summary.date;
             if (opts.date && opts.date !== date) continue;
-            if (opts.stream && opts.stream !== summary.stream) continue;
+            if (opts.type && !streamMatchesType(summary.stream, opts.type)) continue;
             if (opts.bundleId && opts.bundleId !== summary.bundleId) continue;
             if (!summariesByDate.has(date)) {
                 summariesByDate.set(date, []);
@@ -109,6 +114,27 @@ export class Database {
 
         for (const summaries of summariesByDate.values()) {
             summaries.sort((lhs, rhs) => -lhs.timestampStart.localeCompare(rhs.timestampStart));
+        }
+
+        return summariesByDate;
+    }
+
+    getDomainSummariesByDate(filename: string, opts: { date?: string, bundleId?: string } = {}): Map<string, DomainSummary[]> {
+        const rows = this._db.query(`select timestamp, bundleId, domain, hits from domain${VERSION} where filename = ?`, [ filename ]);
+
+        const summariesByDate = new Map<string, DomainSummary[]>();
+        for (const [timestamp, bundleId, domain, hits] of rows) {
+            const date = timestamp.substring(0, 10);
+            if (opts.date && opts.date !== date) continue;
+            if (opts.bundleId && opts.bundleId !== bundleId) continue;
+            if (!summariesByDate.has(date)) {
+                summariesByDate.set(date, []);
+            }
+            summariesByDate.get(date)!.push({ date, bundleId, timestamp, domain, hits });
+        }
+
+        for (const summaries of summariesByDate.values()) {
+            summaries.sort((lhs, rhs) => -lhs.timestamp.localeCompare(rhs.timestamp));
         }
 
         return summariesByDate;
@@ -130,6 +156,14 @@ export interface AccessSummary {
     readonly timestampEnd?: string;
 }
 
+export interface DomainSummary {
+    readonly date: string;
+    readonly bundleId: string;
+    readonly timestamp: string;
+    readonly domain: string;
+    readonly hits: number;
+}
+
 //
 
 function computeStream(stream: string, tccService: string | undefined) {
@@ -139,4 +173,8 @@ function computeStream(stream: string, tccService: string | undefined) {
         rt += '/' + tccService;
     }
     return rt;
+}
+
+function streamMatchesType(stream: string, type: string): boolean {
+    return type === 'access' || type === `access/${stream}`;
 }
