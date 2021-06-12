@@ -1,7 +1,8 @@
 import { serve, ServerRequest } from 'https://deno.land/std@0.98.0/http/server.ts';
 import { readAll } from 'https://deno.land/std@0.98.0/io/util.ts';
-import { AccessSummary, Database, DomainSummary } from './database.ts';
+import { Database } from './database.ts';
 import { importReportFile } from './importer.ts';
+import { TIMESTAMP } from './model.ts';
 
 const port = 8015;
 const server = serve({ port });
@@ -112,6 +113,11 @@ function makeHref(pathname: string, qp: URLSearchParams) {
     return rt;
 }
 
+function formatTimestamp(timestamp: string): string {
+    const m = TIMESTAMP.exec(timestamp);
+    return m ? m[2] : timestamp.substring(11);
+}
+
 function handleHtml(db: Database, url: URL): string | { redirectHref: string } | number {
     const tokens = url.pathname.split('/').filter(v => v !== '');
     const filename = tokens.length > 0 ? tokens[0] : undefined;
@@ -131,7 +137,7 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
     if (filename) {
         const dates = db.getDates(filename);
         const dateList = dates.map(v => ({ selected: date === v, href: computeHref(url, 'date', v), text: v}));
-        dateList.unshift({ selected: date === undefined, href: computeHref(url, 'date'), text: '(all dates)'});
+        dateList.unshift({ selected: date === undefined, href: computeHref(url, 'date'), text: '(all utc days)'});
         renderListHtml(dateList, lines);
 
         const types = db.getTypes(filename);
@@ -147,41 +153,27 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
     lines.push('</div>');
     lines.push('<div id="rhs">');
     if (filename) {
-
-        const accessSummariesByDate = db.getAccessSummariesByDate(filename, { date, type, bundleId });
-        const domainSummariesByDate = db.getDomainSummariesByDate(filename, { date, bundleId });
-        const combinedByDate = new Map<string, {accessSummaries?: AccessSummary[], domainSummaries?: DomainSummary[]}>();
-        for (const [date, accessSummaries] of accessSummariesByDate) {
-            const combined = combinedByDate.get(date) || {};
-            combined.accessSummaries = accessSummaries;
-            combinedByDate.set(date, combined);
-        }
-        for (const [date, domainSummaries] of domainSummariesByDate) {
-            const combined = combinedByDate.get(date) || {};
-            combined.domainSummaries = domainSummaries;
-            combinedByDate.set(date, combined);
-        }
+        lines.push('<div id="utchint"><em>All dates and times in utc</em></div>');
+        const commonSummariesByDate = db.getCommonSummariesByDate(filename, { date, type, bundleId });
 
         lines.push('<table>');
-        for (const date of [...combinedByDate.keys()].sort().reverse()) {
+        for (const date of [...commonSummariesByDate.keys()].sort().reverse()) {
             lines.push(`<tr><td colspan="5"><h3><a href="${computeHref(url, 'date', date)}">${date}</a></h3></td></tr>`);
 
-            const { accessSummaries, domainSummaries } = combinedByDate.get(date)!;
-            if (accessSummaries) {
-                for (const summary of accessSummaries) {
-                    const streamLink = `<a href="${computeHref(url, 'type', 'access/' + summary.stream)}">${summary.stream}</a>`;
-                    const bundleIdLink = `<a href="${computeHref(url, 'bundleId', summary.bundleId)}">${summary.bundleId}</a>`;
-                    lines.push(`<tr><td>${summary.timestampStart.substring(11)}</td><td>${summary.timestampEnd?.substring(11) || ''}</td><td>${bundleIdLink}</td><td></td><td>${streamLink}</td></tr>`);
+            const showDomains = type === undefined || !type.startsWith('access');
+            for (const summary of commonSummariesByDate.get(date)!) {
+                const { accessSummary, domainSummary } = summary;
+                if (accessSummary) {
+                    const type = 'access/' + accessSummary.stream;
+                    const streamLink = `<a href="${computeHref(url, 'type', type)}">${type}</a>`;
+                    const bundleIdLink = `<a href="${computeHref(url, 'bundleId', accessSummary.bundleId)}">${accessSummary.bundleId}</a>`;
+                    lines.push(`<tr><td>${formatTimestamp(accessSummary.timestampStart)}</td><td>${accessSummary.timestampEnd ? formatTimestamp(accessSummary.timestampEnd) : ''}</td><td>${bundleIdLink}</td><td></td><td>${streamLink}</td></tr>`);
+                }
+                if (domainSummary && showDomains) {
+                    const bundleIdLink = `<a href="${computeHref(url, 'bundleId', domainSummary.bundleId)}">${domainSummary.bundleId}</a>`;
+                    lines.push(`<tr><td>${formatTimestamp(domainSummary.timestamp)}</td><td></td><td>${bundleIdLink}</td><td>${domainSummary.hits}</td><td>${domainSummary.domain}</td></tr>`);
                 }
             }
-
-            if (domainSummaries && (type === undefined || !type.startsWith('access'))) {
-                for (const summary of domainSummaries) {
-                    const bundleIdLink = `<a href="${computeHref(url, 'bundleId', summary.bundleId)}">${summary.bundleId}</a>`;
-                    lines.push(`<tr><td>${summary.timestamp.substring(11)}</td><td></td><td>${bundleIdLink}</td><td>${summary.hits}</td><td>${summary.domain}</td></tr>`);
-                }
-            }
-        
         }
         lines.push('</table>');
     }
@@ -274,6 +266,10 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
 
         #rhs {
             margin: 0 1rem;
+        }
+
+        #utchint {
+            margin: 1em 1em 0 1em;
         }
 
         table {

@@ -26,7 +26,10 @@ export function isAccessRecord(obj: any): obj is AccessRecord {
 
 export function checkAccessRecord(record: AccessRecord) {
     if (!record.stream.startsWith('com.apple.privacy.accounting.stream.')) throw new Error(`Bad stream: ${record.stream}`);
+    checkTimestamp('timestamp', record.timestamp);
 }
+
+//
 
 export interface DomainRecord {
     readonly domain: string;
@@ -55,4 +58,21 @@ export function isDomainRecord(obj: any): obj is DomainRecord {
         && typeof obj.initiatedType === 'string'
         && typeof obj.firstTimeStamp === 'string'
         && Object.keys(obj).every(v => ['domain', 'effectiveUserId', 'domainType', 'timeStamp', 'hasApp.bundleName', 'context', 'hits', 'domainOwner', 'initiatedType', 'firstTimeStamp'].includes(v))
+}
+
+export function checkDomainRecord(record: DomainRecord) {
+    checkTimestamp('timeStamp', record.timeStamp);
+    checkTimestamp('firstTimeStamp', record.firstTimeStamp);
+}
+
+//
+
+export const TIMESTAMP = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(\.\d{1,3})?Z$/;
+
+//
+
+function checkTimestamp(name: string, value: string) {
+    // 2021-06-11T05:18:04Z
+    // 2021-06-08T23:48:49.573Z
+    if (!TIMESTAMP.test(value)) throw new Error(`Bad ${name}: ${value}`);
 }

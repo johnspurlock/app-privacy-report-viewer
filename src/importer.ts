@@ -1,5 +1,5 @@
 import { Database } from './database.ts';
-import { checkAccessRecord, isAccessRecord, isDomainRecord } from './model.ts';
+import { isAccessRecord, isDomainRecord } from './model.ts';
 
 export function importReportFile(text: string, filename: string, db: Database) {
     const lines = text.split('\n');
@@ -38,8 +38,9 @@ export function importReportFile(text: string, filename: string, db: Database) {
         } else if (typeof obj.version === 'number') {
             if (obj.version !== 3) throw new Error(`Bad line, expected version=3: ${line}`);
             if (!isAccessRecord(obj)) throw new Error(`Bad line, expected access record: ${line}`);
-            checkAccessRecord(obj);
-            db.insertAccess(filename, nextLine++, obj);
+            const timestamp = convertZonedTimestampToUtc(obj.timestamp);
+            const record = { ...obj, timestamp };
+            db.insertAccess(filename, nextLine++, record);
             
         } else {
             throw new Error(`Bad line, expected version: ${line}`);
@@ -58,9 +59,14 @@ function importDomainRecords(json: string, db: Database, filename: string) {
         if (!Array.isArray(records)) throw new Error(`processDomainRecords: expected records array, found ${typeof records}`);
         for (const record of records) {
             if (!isDomainRecord(record)) throw new Error(`processDomainRecords: Bad record: ${JSON.stringify(record)}`);
-            console.log([filename, bundleId, record.domain, record.context, record.initiatedType].join('-'));
             db.insertDomain(filename, bundleId, record);
         }
-        
     }
+}
+
+function convertZonedTimestampToUtc(zonedTimestamp: string): string {
+    // 2021-06-08T18:48:49.573-05:00
+    const d = new Date(zonedTimestamp);
+    const rt = d.toISOString();
+    return rt;
 }

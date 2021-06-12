@@ -1,5 +1,5 @@
 import { DB } from 'https://deno.land/x/sqlite@v2.4.2/mod.ts';
-import { AccessRecord, DomainRecord } from './model.ts';
+import { AccessRecord, checkAccessRecord, checkDomainRecord, DomainRecord } from './model.ts';
 
 const VERSION = 1;
 
@@ -66,6 +66,7 @@ export class Database {
     }
 
     insertAccess(filename: string, line: number, record: AccessRecord) {
+        checkAccessRecord(record);
         this._db.query(`insert into access${VERSION}(filename, line, stream, accessorIdentifier, accessorIdentifierType, tccService, identifier, kind, timestamp, version) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [filename, line, record.stream, record.accessor.identifier, record.accessor.identifierType, record.tccService, record.identifier, record.kind, record.timestamp, record.version]);
         if (this._db.changes !== 1) throw new Error(`Failed to insert access record`);
@@ -76,6 +77,7 @@ export class Database {
     }
 
     insertDomain(filename: string, bundleId: string, record: DomainRecord) {
+        checkDomainRecord(record);
         this._db.query(`insert into domain${VERSION}(filename, bundleId, domain, effectiveUserId, domainType, timeStamp, hasAppBundleName, context, hits, domainOwner, initiatedType, firstTimeStamp) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
                     [filename, bundleId, record.domain, record.effectiveUserId, record.domainType, record.timeStamp, record['hasApp.bundleName'], record.context, record.hits, record.domainOwner, record.initiatedType, record.firstTimeStamp]);
         if (this._db.changes !== 1) throw new Error(`Failed to insert domain record`);
@@ -112,9 +114,7 @@ export class Database {
             summariesByDate.get(date)!.push(summary);
         }
 
-        for (const summaries of summariesByDate.values()) {
-            summaries.sort((lhs, rhs) => -lhs.timestampStart.localeCompare(rhs.timestampStart));
-        }
+        sortByTimestampDescending(summariesByDate, v => v.timestampStart);
 
         return summariesByDate;
     }
@@ -133,11 +133,37 @@ export class Database {
             summariesByDate.get(date)!.push({ date, bundleId, timestamp, domain, hits });
         }
 
-        for (const summaries of summariesByDate.values()) {
-            summaries.sort((lhs, rhs) => -lhs.timestamp.localeCompare(rhs.timestamp));
-        }
+        sortByTimestampDescending(summariesByDate, v => v.timestamp);
 
         return summariesByDate;
+    }
+
+    getCommonSummariesByDate(filename: string, opts: { date?: string, type?: string, bundleId?: string } = {}): Map<string, CommonSummary[]> {
+        const accessSummariesByDate = this.getAccessSummariesByDate(filename, opts);
+        const domainSummariesByDate = this.getDomainSummariesByDate(filename, opts);
+        const commonSummariesByDate = new Map<string, CommonSummary[]>();
+        for (const date of accessSummariesByDate.keys()) {
+            for (const accessSummary of accessSummariesByDate.get(date)!) {
+                const timestamp = accessSummary.timestampStart;
+                if (!commonSummariesByDate.has(date)) {
+                    commonSummariesByDate.set(date, []);
+                }
+                commonSummariesByDate.get(date)!.push({ timestamp, accessSummary });
+            }
+        }
+        for (const date of domainSummariesByDate.keys()) {
+            for (const domainSummary of domainSummariesByDate.get(date)!) {
+                const timestamp = domainSummary.timestamp;
+                if (!commonSummariesByDate.has(date)) {
+                    commonSummariesByDate.set(date, []);
+                }
+                commonSummariesByDate.get(date)!.push({ timestamp, domainSummary });
+            }
+        }
+
+        sortByTimestampDescending(commonSummariesByDate, v => v.timestamp);
+
+        return commonSummariesByDate;
     }
 
     close() {
@@ -164,6 +190,12 @@ export interface DomainSummary {
     readonly hits: number;
 }
 
+export interface CommonSummary {
+    timestamp: string;
+    accessSummary?: AccessSummary;
+    domainSummary?: DomainSummary;
+}
+
 //
 
 function computeStream(stream: string, tccService: string | undefined) {
@@ -177,4 +209,10 @@ function computeStream(stream: string, tccService: string | undefined) {
 
 function streamMatchesType(stream: string, type: string): boolean {
     return type === 'access' || type === `access/${stream}`;
+}
+
+function sortByTimestampDescending<T>(valuesByDate: Map<string, T[]>, timestampFn: (item: T) => string) {
+    for (const summaries of valuesByDate.values()) {
+        summaries.sort((lhs, rhs) => -timestampFn(lhs).localeCompare(timestampFn(rhs)));
+    }
 }
