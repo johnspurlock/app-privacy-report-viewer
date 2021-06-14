@@ -3,7 +3,7 @@ import { isAccessRecord, isDomainRecord } from './model.ts';
 
 export function importReportFile(text: string, filename: string, db: Database) {
     const lines = text.split('\n');
-    console.log(`${lines.length} lines`);
+    console.log(`importReportFile: ${lines.length} lines`);
    
     db.clearAccess(filename);
 

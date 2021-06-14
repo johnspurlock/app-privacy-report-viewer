@@ -93,6 +93,9 @@ export class Database {
             let date = timestampStart ? timestampStart.substring(0, 10) : undefined;
             const existing = summariesByIdentifier.get(identifier);
             if (!existing) {
+                // ensure timestampStart & date have initial defined values (in case we don't get an intervalStart), this is better than nothing
+                timestampStart = timestamp; 
+                date = timestampStart.substring(0, 10);
                 summariesByIdentifier.set(identifier, { date, stream: computeStream(stream, tccService), bundleId: accessorIdentifier, timestampStart, timestampEnd });
             } else {
                 timestampStart = timestampStart || existing.timestampStart;

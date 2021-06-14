@@ -12,6 +12,7 @@ console.log(`HTTP webserver running.  Access it at: ${origin}/`);
 
 const dbName = 'reports.db';
 const FILENAME = '[a-zA-Z0-9-]+';
+const DEBUG = false;
 
 for await (const request of server) {
     console.log(`${request.method} ${request.url}`);
@@ -23,7 +24,7 @@ for await (const request of server) {
             doWithDatabase(db => {
                 const result = handleHtml(db, url);
                 if (typeof result === 'string') {
-                    request.respond({ status: 200, body: result });
+                    request.respond({ status: 200, body: result, headers: new Headers({ 'Content-Type': 'text/html; charset=utf-8' }) });
                 } else if (typeof result === 'number') {
                     request.respond({ status: 404, body: 'not found' });
                 } else {
@@ -73,13 +74,15 @@ function computeFilename(request: ServerRequest) {
 }
 
 async function handlePost(request: ServerRequest): Promise<Record<string, unknown>> {
-    for (const [name, value] of request.headers.entries()) {
-        console.log(`${name}: ${value}`);
+    if (DEBUG) {
+        for (const [name, value] of request.headers.entries()) {
+            console.log(`${name}: ${value}`);
+        }
     }
     const filename = computeFilename(request);
 
     const bytes = await readAll(request.body);
-    console.log(`${bytes.length} bytes`);
+    if (DEBUG) console.log(`${bytes.length} bytes`);
     const decoder = new TextDecoder('utf-8');
     const text = decoder.decode(bytes);
     doWithDatabase(db => {
@@ -164,17 +167,35 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
             lines.push(`<tr><td colspan="5"><h3><a href="${computeHref(url, 'date', date)}">${date}</a></h3></td></tr>`);
 
             const showDomains = type === undefined || !type.startsWith('access');
-            for (const summary of commonSummariesByDate.get(date)!) {
-                const { accessSummary, domainSummary } = summary;
+            const commonSummariesForDate = commonSummariesByDate.get(date)!;
+            for (let i = 0; i < commonSummariesForDate.length; i++) {
+                const { accessSummary, domainSummary } = commonSummariesForDate[i];
                 if (accessSummary) {
                     const type = 'access/' + accessSummary.stream;
-                    const streamLink = `<a href="${computeHref(url, 'type', type)}">${type}</a>`;
+                    let typeLink = `<a href="${computeHref(url, 'type', type)}">${type}</a>`;
                     const bundleIdLink = `<a href="${computeHref(url, 'bundleId', accessSummary.bundleId)}">${accessSummary.bundleId}</a>`;
-                    lines.push(`<tr><td>${accessSummary.timestampStart ? formatTimestamp(accessSummary.timestampStart) : ""}</td><td>${accessSummary.timestampEnd ? formatTimestamp(accessSummary.timestampEnd) : ''}</td><td>${bundleIdLink}</td><td></td><td>${streamLink}</td></tr>`);
+                    const time = formatTimestamp(accessSummary.timestampStart);
+                    const timeEnd = accessSummary.timestampEnd ? formatTimestamp(accessSummary.timestampEnd) : '';
+                    let count = 1;
+                    while (timeEnd === '' && i < (commonSummariesForDate.length - 1)) {
+                        // coalesce access duplicates for same time second
+                        // there can be multiple address book accesses in the same second, for example
+                        const { accessSummary: nextAccessSummary } = commonSummariesForDate[i + 1];
+                        if (nextAccessSummary && nextAccessSummary.stream === accessSummary.stream && nextAccessSummary.bundleId === accessSummary.bundleId && formatTimestamp(nextAccessSummary.timestampStart) === time) {
+                            count++;
+                            i++;
+                        } else {
+                            break;
+                        }
+                    }
+                    if (count > 1) typeLink += ` x${count}`;
+                    lines.push(`<tr><td>${time}</td><td>${timeEnd}</td><td>${bundleIdLink}</td><td></td><td>${typeLink}</td></tr>`);
                 }
                 if (domainSummary && showDomains) {
                     const bundleIdLink = `<a href="${computeHref(url, 'bundleId', domainSummary.bundleId)}">${domainSummary.bundleId}</a>`;
-                    lines.push(`<tr><td>${formatTimestamp(domainSummary.timestamp)}</td><td></td><td>${bundleIdLink}</td><td>${domainSummary.hits}</td><td>${domainSummary.domain}</td></tr>`);
+                    const domainLocal = domainSummary.domain.endsWith('.local');
+                    const domainHtml = domainLocal ? domainSummary.domain : `<a class="domain" href="https://host.io/${domainSummary.domain}" target="_blank" rel="noreferrer noopener nofollow">${domainSummary.domain}</a>`;
+                    lines.push(`<tr><td>${formatTimestamp(domainSummary.timestamp)}</td><td></td><td>${bundleIdLink}</td><td>${domainSummary.hits}</td><td>${domainHtml}</td></tr>`);
                 }
             }
         }
@@ -196,19 +217,34 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
             const header = document.getElementsByTagName('header')[0];
             header.textContent = 'Importing...';
             try {
+                const files = [];
                 if (event.dataTransfer.items) {
                     for (let item of event.dataTransfer.items) {
                         if (item.kind === 'file') {
-                            processFile(item.getAsFile(), header);
+                            files.push(item.getAsFile());
                         } else {
                             console.log('Bad item.kind: expected file, found ' + item.kind, item);
                         }
                     }
                 } else {
                     for (let file of event.dataTransfer.files) {
-                        processFile(file, header);
+                        files.push(file);
                     }
                 }
+                if (files.length === 0) {
+                    header.textContent = 'Nothing to import';
+                    return;
+                }
+                Promise.all(files.map(importFile)).then(results => {
+                    const errors = results.filter(v => v.error);
+                    if (errors.length > 0) {
+                        header.textContent = errors.map(v => v.error).join(', ');
+                    }
+                    const lastFilename = results.filter(v => v.filename).map(v => v.filename).pop();
+                    if (lastFilename) {
+                        document.location = '/' + lastFilename;
+                    }
+                });
             } catch (e) {
                 header.textContent = e;
             }
@@ -218,18 +254,15 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
            event.preventDefault();
         }
 
-        function processFile(file, header) {
+        function importFile(file) {
             let status = 0;
-            fetch('/', { method: 'POST', body: file, headers: { 'x-filename': file.name } }).then(v => { status = v.status; return v.json(); }).then(v => {
+            return fetch('/', { method: 'POST', body: file, headers: { 'x-filename': file.name } }).then(v => { status = v.status; return v.json(); }).then(v => {
                 if (status !== 200)  {
-                    console.error('fetch failed', v.errorDetail);
-                    header.textContent = v.error;
-                    return;
+                    return { error: v.error, errorDetail: v.errorDetail };
                 }
-                document.location = '/' + v.filename;
+                return v;
             }).catch(e => {
-                console.error('fetch failed', e);
-                header.textContent = e;
+                return { error: e.toString(), errorDetail: e.stack };
             });
         }
     </script>
@@ -289,6 +322,12 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
         table a:hover {
             text-decoration: underline;
             color: blue;
+        }
+
+        a.domain:hover:after {
+            position: relative;
+            content: " lookup ↗︎";
+            color: #888888;
         }
 
         h3 {
