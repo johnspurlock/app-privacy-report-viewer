@@ -170,7 +170,7 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
                     const type = 'access/' + accessSummary.stream;
                     const streamLink = `<a href="${computeHref(url, 'type', type)}">${type}</a>`;
                     const bundleIdLink = `<a href="${computeHref(url, 'bundleId', accessSummary.bundleId)}">${accessSummary.bundleId}</a>`;
-                    lines.push(`<tr><td>${formatTimestamp(accessSummary.timestampStart)}</td><td>${accessSummary.timestampEnd ? formatTimestamp(accessSummary.timestampEnd) : ''}</td><td>${bundleIdLink}</td><td></td><td>${streamLink}</td></tr>`);
+                    lines.push(`<tr><td>${accessSummary.timestampStart ? formatTimestamp(accessSummary.timestampStart) : ""}</td><td>${accessSummary.timestampEnd ? formatTimestamp(accessSummary.timestampEnd) : ''}</td><td>${bundleIdLink}</td><td></td><td>${streamLink}</td></tr>`);
                 }
                 if (domainSummary && showDomains) {
                     const bundleIdLink = `<a href="${computeHref(url, 'bundleId', domainSummary.bundleId)}">${domainSummary.bundleId}</a>`;
