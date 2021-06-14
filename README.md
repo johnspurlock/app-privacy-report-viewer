@@ -22,7 +22,7 @@ This tool is a simple app to import these files and display them in a web interf
 
 To get started:
  - Ensure `deno` is installed (it's [easy to install](https://deno.land/#installation))
- - Run `deno run --allow-net --allow-read=. --allow-write=. https://raw.githubusercontent.com/johnspurlock/app-privacy-report-viewer/v0.1/src/app.ts`
+ - Run `deno run --allow-net --allow-read=. --allow-write=. https://raw.githubusercontent.com/johnspurlock/app-privacy-report-viewer/v0.2/src/app.ts`
  - Open the locally-running web app at http://localhost:8015
  - Drag and drop your `app-privacy-report-yyyy-mm-dd-hh-mm.json` file into the web app
 
