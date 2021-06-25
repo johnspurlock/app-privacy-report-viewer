@@ -1,7 +1,7 @@
 import { DB } from 'https://deno.land/x/sqlite@v2.4.2/mod.ts';
-import { AccessRecord, checkAccessRecord, checkDomainRecord, DomainRecord } from './model.ts';
+import { AccessRecord, checkAccessRecord, checkDomainRecord, DomainRecord, isAccessRecordBeta1, isAccessRecordBeta2, isDomainRecordBeta1 } from './model.ts';
 
-const VERSION = 1;
+const VERSION = 2;
 
 export class Database {
     private readonly _db: DB;
@@ -12,14 +12,15 @@ export class Database {
         this._db.query(`create table if not exists access${VERSION}(
             filename text not null,
             line integer not null,
-            stream text not null,
+            stream text null,
             accessorIdentifier text not null,
             accessorIdentifierType text not null,
             tccService text,
             identifier text not null,
             kind text not null,
             timestamp text not null,
-            version integer not null,
+            version integer null,
+            category text null,
             primary key (filename, line)) without rowid`);
 
         this._db.query(`create table if not exists domain${VERSION}(
@@ -28,10 +29,10 @@ export class Database {
             domain text not null,
             context text not null,
             initiatedType string not null,
-            effectiveUserId number not null,
+            effectiveUserId number null,
             domainType number not null,
             timeStamp text not null,
-            hasAppBundleName text not null,
+            hasAppBundleName text null,
             hits integer not null,
             domainOwner string not null,
             firstTimeStamp string not null,
@@ -54,7 +55,7 @@ export class Database {
     }
 
     getTypes(filename: string): string[] {
-        const streams = [...this._db.query(`select distinct stream, tccService from access${VERSION} where filename = ? order by stream, tccService`, [filename])].map(([stream, tccService]) => computeStream(stream, tccService));
+        const streams = [...this._db.query(`select distinct stream, tccService, category from access${VERSION} where filename = ? order by stream, tccService, category`, [filename])].map(([stream, tccService, category]) => computeStream(stream, tccService, category));
         const rt = streams.map(v => `access/${v}`);
         rt.unshift('access');
         rt.push('domains');
@@ -67,8 +68,12 @@ export class Database {
 
     insertAccess(filename: string, line: number, record: AccessRecord) {
         checkAccessRecord(record);
-        this._db.query(`insert into access${VERSION}(filename, line, stream, accessorIdentifier, accessorIdentifierType, tccService, identifier, kind, timestamp, version) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [filename, line, record.stream, record.accessor.identifier, record.accessor.identifierType, record.tccService, record.identifier, record.kind, record.timestamp, record.version]);
+        const version = isAccessRecordBeta1(record) ? record.version : undefined;
+        const stream = isAccessRecordBeta1(record) ? record.stream : undefined;
+        const category = isAccessRecordBeta2(record) ? record.category : undefined;
+
+        this._db.query(`insert into access${VERSION}(filename, line, stream, accessorIdentifier, accessorIdentifierType, tccService, identifier, kind, timestamp, version, category) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [filename, line, stream, record.accessor.identifier, record.accessor.identifierType, record.tccService, record.identifier, record.kind, record.timestamp, version, category]);
         if (this._db.changes !== 1) throw new Error(`Failed to insert access record`);
     }
 
@@ -78,16 +83,18 @@ export class Database {
 
     insertDomain(filename: string, bundleId: string, record: DomainRecord) {
         checkDomainRecord(record);
+        const effectiveUserId = isDomainRecordBeta1(record) ? record.effectiveUserId : undefined;
+        const hasAppBundleName = isDomainRecordBeta1(record) ? record['hasApp.bundleName'] : undefined;
         this._db.query(`insert into domain${VERSION}(filename, bundleId, domain, effectiveUserId, domainType, timeStamp, hasAppBundleName, context, hits, domainOwner, initiatedType, firstTimeStamp) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
-                    [filename, bundleId, record.domain, record.effectiveUserId, record.domainType, record.timeStamp, record['hasApp.bundleName'], record.context, record.hits, record.domainOwner, record.initiatedType, record.firstTimeStamp]);
+                    [filename, bundleId, record.domain, effectiveUserId, record.domainType, record.timeStamp, hasAppBundleName, record.context, record.hits, record.domainOwner, record.initiatedType, record.firstTimeStamp]);
         if (this._db.changes !== 1) throw new Error(`Failed to insert domain record`);
     }
 
     getAccessSummariesByDate(filename: string, opts: { date?: string, type?: string, bundleId?: string } = {}): Map<string, AccessSummary[]> {
-        const rows = this._db.query(`select stream, tccService, accessorIdentifier, timestamp, identifier, kind from access${VERSION} where filename = ?`, [ filename ]);
+        const rows = this._db.query(`select stream, tccService, accessorIdentifier, timestamp, identifier, kind, category from access${VERSION} where filename = ?`, [ filename ]);
 
         const summariesByIdentifier = new Map<string, AccessSummary>();
-        for (const [stream, tccService, accessorIdentifier, timestamp, identifier, kind] of rows) {
+        for (const [stream, tccService, accessorIdentifier, timestamp, identifier, kind, category] of rows) {
             let timestampStart = kind === 'intervalEnd' ? undefined : timestamp;
             let timestampEnd = kind === 'intervalEnd' ? timestamp : undefined;
             let date = timestampStart ? timestampStart.substring(0, 10) : undefined;
@@ -96,7 +103,7 @@ export class Database {
                 // ensure timestampStart & date have initial defined values (in case we don't get an intervalStart), this is better than nothing
                 timestampStart = timestamp; 
                 date = timestampStart.substring(0, 10);
-                summariesByIdentifier.set(identifier, { date, stream: computeStream(stream, tccService), bundleId: accessorIdentifier, timestampStart, timestampEnd });
+                summariesByIdentifier.set(identifier, { date, stream: computeStream(stream, tccService, category), bundleId: accessorIdentifier, timestampStart, timestampEnd });
             } else {
                 timestampStart = timestampStart || existing.timestampStart;
                 timestampEnd = timestampEnd || existing.timestampStart;
@@ -201,7 +208,8 @@ export interface CommonSummary {
 
 //
 
-function computeStream(stream: string, tccService: string | undefined) {
+function computeStream(stream: string, tccService: string | undefined, category: string | undefined): string {
+    if (category) return category;
     let rt = stream;
     if (rt.startsWith('com.apple.privacy.accounting.stream.')) rt = rt.substring('com.apple.privacy.accounting.stream.'.length);
     if (tccService) {

@@ -1,5 +1,5 @@
 import { Database } from './database.ts';
-import { isAccessRecord, isDomainRecord } from './model.ts';
+import { AccessRecord, DomainRecordBeta2, isAccessRecordBeta1, isAccessRecordBeta2, isDomainRecordBeta1, isDomainRecordBeta2 } from './model.ts';
 
 export function importReportFile(text: string, filename: string, db: Database) {
     const lines = text.split('\n');
@@ -7,6 +7,8 @@ export function importReportFile(text: string, filename: string, db: Database) {
    
     db.clearAccess(filename);
 
+    let recordType = '';
+    let recordTypeVersion = 0;
     let foundEndOfSection = false;
     let nextLine = 1;
     for (let i = 0; i < lines.length; i++) {
@@ -14,7 +16,7 @@ export function importReportFile(text: string, filename: string, db: Database) {
         if (line === '') continue;
 
         if (foundEndOfSection && line === '{') {
-            importDomainRecords(lines.slice(i).join('\n'), db, filename);
+            importDomainRecordsBeta1(lines.slice(i).join('\n'), db, filename);
             break;
         }
         // deno-lint-ignore no-explicit-any
@@ -30,35 +32,71 @@ export function importReportFile(text: string, filename: string, db: Database) {
             if (marker === '<end-of-section>') {
                 foundEndOfSection = true;
             } else if (marker === '<metadata>') {
-                // {"version":2,"recordType":"access","exportTimestamp":"2021-06-11T13:46:18.386-05:00","_marker":"<metadata>"}
-                if (obj.recordType !== 'access') throw new Error(`Bad metadata marker line, expected recordType=access: ${line}`);
+                // beta1: {"version":2,"recordType":"access","exportTimestamp":"2021-06-11T13:46:18.386-05:00","_marker":"<metadata>"}
+                // beta2: {"version":3,"recordType":"access","exportTimestamp":"2021-06-25T09:51:51.222-05:00","_marker":"<metadata>"}
+                // beta2: {"recordType":"networkActivity","_marker":"<metadata>","exportTimestamp":"2021-06-25T09:51:51.767-05:00","version":1}
+                if (obj.recordType !== 'access' && obj.recordType !== 'networkActivity') throw new Error(`Bad metadata marker line, expected recordType=access or networkActivity: ${line}`);
+                if (typeof obj.version !== 'number') throw new Error(`Bad metadata marker line, expected version: ${line}`);
+                recordType = obj.recordType;
+                recordTypeVersion = obj.version;
+                console.log(`${recordType} version ${recordTypeVersion}`);
             } else {
                 console.log(`Unhandled marker line: ${line}`);
             }
-        } else if (typeof obj.version === 'number') {
-            if (obj.version !== 3) throw new Error(`Bad line, expected version=3: ${line}`);
-            if (!isAccessRecord(obj)) throw new Error(`Bad line, expected access record: ${line}`);
-            const timestamp = convertZonedTimestampToUtc(obj.timestamp);
-            const record = { ...obj, timestamp };
-            db.insertAccess(filename, nextLine++, record);
+        } else if (typeof obj.version === 'number' || typeof obj.category === 'string'|| typeof obj.bundleID === 'string') {
+            if (recordType === 'access') {
+                const parsed = parseAccessRecord(obj, recordTypeVersion, line);
+                const timestamp = convertZonedTimestampToUtc(parsed.timestamp);
+                const record = { ...parsed, timestamp };
+                db.insertAccess(filename, nextLine++, record);
+            } else if (recordType === 'networkActivity') {
+                const parsed = parseDomainRecordBeta2(obj, line);
+                const timeStamp = convertZonedTimestampToUtc(parsed.timeStamp);
+                const firstTimeStamp = convertZonedTimestampToUtc(parsed.firstTimeStamp);
+                const record = { ...parsed, timeStamp, firstTimeStamp };
+                db.insertDomain(filename, record.bundleID, record);
+            }
             
         } else {
-            throw new Error(`Bad line, expected version: ${line}`);
+            throw new Error(`Bad line, expected access record: ${line}`);
         }
     }
 }
 
 //
 
-function importDomainRecords(json: string, db: Database, filename: string) {
+// deno-lint-ignore no-explicit-any
+function parseAccessRecord(obj: any, version: number, line: string): AccessRecord {
+    if (version === 2) {
+        // beta 1
+        if (obj.version !== 3) throw new Error(`Bad line, expected version=3: ${line}`);
+        if (!isAccessRecordBeta1(obj)) throw new Error(`Bad line, expected beta 1 access record: ${line}`);
+        return obj;
+    } else if (version === 3) {
+        // beta 2
+        if (!isAccessRecordBeta2(obj)) throw new Error(`Bad line, expected beta 2 access record: ${line}`);
+        return obj;
+    } else {
+        throw new Error(`parseAccessRecord: Unsupported file version: ${version}`); 
+    }
+}
+
+// deno-lint-ignore no-explicit-any
+function parseDomainRecordBeta2(obj: any, line: string): DomainRecordBeta2 {
+    // {"domain":"mask.icloud.com","firstTimeStamp":"2021-06-18T05:55:10.417-05:00","domainType":2,"timeStamp":"2021-06-23T04:02:13.891-05:00","context":"","initiatedType":"AppInitiated","hits":7,"domainOwner":"","bundleID":"com.sonos.SonosController"}
+    if (!isDomainRecordBeta2(obj)) throw new Error(`Bad line, expected beta 2 domain record: ${line}`);
+    return obj;
+}
+
+function importDomainRecordsBeta1(json: string, db: Database, filename: string) {
     const obj = JSON.parse(json);
-    if (typeof obj !== 'object') throw new Error(`processDomainRecords: expected object, found ${typeof obj}`);
+    if (typeof obj !== 'object') throw new Error(`importDomainRecordsBeta1: expected object, found ${typeof obj}`);
     db.clearDomain(filename);
     for (const bundleId of Object.keys(obj)) {
         const records = obj[bundleId];
-        if (!Array.isArray(records)) throw new Error(`processDomainRecords: expected records array, found ${typeof records}`);
+        if (!Array.isArray(records)) throw new Error(`importDomainRecordsBeta1: expected records array, found ${typeof records}`);
         for (const record of records) {
-            if (!isDomainRecord(record)) throw new Error(`processDomainRecords: Bad record: ${JSON.stringify(record)}`);
+            if (!isDomainRecordBeta1(record)) throw new Error(`importDomainRecordsBeta1: Bad record: ${JSON.stringify(record)}`);
             db.insertDomain(filename, bundleId, record);
         }
     }
