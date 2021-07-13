@@ -1,6 +1,6 @@
-import { serve, ServerRequest } from 'https://deno.land/std@0.100.0/http/server.ts';
-import { readAll } from 'https://deno.land/std@0.100.0/io/util.ts';
-import { resolve } from 'https://deno.land/std@0.100.0/path/mod.ts';
+import { serve, ServerRequest } from 'https://deno.land/std@0.101.0/http/server.ts';
+import { readAll } from 'https://deno.land/std@0.101.0/io/util.ts';
+import { resolve } from 'https://deno.land/std@0.101.0/path/mod.ts';
 import { Database } from './database.ts';
 import { importReportFile } from './importer.ts';
 import { TIMESTAMP } from './model.ts';
