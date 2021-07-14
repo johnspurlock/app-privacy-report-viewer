@@ -1,5 +1,5 @@
 import { DB } from 'https://deno.land/x/sqlite@v2.4.2/mod.ts';
-import { AccessRecord, checkAccessRecord, checkDomainRecord, DomainRecord, isAccessRecordBeta1, isAccessRecordBeta2, isDomainRecordBeta1 } from './model.ts';
+import { AccessRecord, checkAccessRecord, checkDomainRecord, DomainRecord, isAccessRecordBeta1, isDomainRecordBeta1 } from './model.ts';
 
 const VERSION = 2;
 
@@ -66,14 +66,13 @@ export class Database {
         this._db.query(`delete from access${VERSION} where filename = ?`, [ filename ]);
     }
 
-    insertAccess(filename: string, line: number, record: AccessRecord) {
-        checkAccessRecord(record);
+    insertAccess(filename: string, line: number, record: AccessRecord, category: string | undefined) {
+        const timestamp = checkAccessRecord(record);
         const version = isAccessRecordBeta1(record) ? record.version : undefined;
         const stream = isAccessRecordBeta1(record) ? record.stream : undefined;
-        const category = isAccessRecordBeta2(record) ? record.category : undefined;
 
         this._db.query(`insert into access${VERSION}(filename, line, stream, accessorIdentifier, accessorIdentifierType, tccService, identifier, kind, timestamp, version, category) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [filename, line, stream, record.accessor.identifier, record.accessor.identifierType, record.tccService, record.identifier, record.kind, record.timestamp, version, category]);
+            [filename, line, stream, record.accessor.identifier, record.accessor.identifierType, record.tccService, record.identifier, record.kind, timestamp, version, category]);
         if (this._db.changes !== 1) throw new Error(`Failed to insert access record`);
     }
 

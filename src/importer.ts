@@ -1,5 +1,5 @@
 import { Database } from './database.ts';
-import { AccessRecord, DomainRecordBeta2, isAccessRecordBeta1, isAccessRecordBeta2, isDomainRecordBeta1, isDomainRecordBeta2 } from './model.ts';
+import { AccessRecord, DomainRecordBeta2, DomainRecordBeta3, isAccessRecordBeta1, isAccessRecordBeta2, isAccessRecordBeta3, isDomainRecordBeta1, isDomainRecordBeta2, isDomainRecordBeta3 } from './model.ts';
 
 export function importReportFile(text: string, filename: string, db: Database) {
     const lines = text.split('\n');
@@ -43,12 +43,31 @@ export function importReportFile(text: string, filename: string, db: Database) {
             } else {
                 console.log(`Unhandled marker line: ${line}`);
             }
+        } else if (typeof obj.type === 'string') {
+            recordTypeVersion = 4;
+            if (obj.type === 'access') {
+                const parsed = parseAccessRecord(obj, recordTypeVersion, line);
+                if (!isAccessRecordBeta3(parsed)) throw new Error(`Expected beta 3 access record`);
+                const timestamp = convertZonedTimestampToUtc(parsed.timeStamp);
+                const record = { ...parsed, timestamp };
+                db.insertAccess(filename, nextLine++, record, record.category);
+            } else if (obj.type === 'networkActivity') {
+                const parsed = parseDomainRecordBeta3(obj, line);
+                const timeStamp = convertZonedTimestampToUtc(parsed.timeStamp);
+                const firstTimeStamp = convertZonedTimestampToUtc(parsed.firstTimeStamp);
+                const record = { ...parsed, timeStamp, firstTimeStamp };
+                db.insertDomain(filename, record.bundleID, record);
+            } else {
+                throw new Error(`Unexpected type: ${obj.type}`);
+            }
         } else if (typeof obj.version === 'number' || typeof obj.category === 'string'|| typeof obj.bundleID === 'string') {
             if (recordType === 'access') {
                 const parsed = parseAccessRecord(obj, recordTypeVersion, line);
+                if (!isAccessRecordBeta1(parsed) && !isAccessRecordBeta2(parsed)) throw new Error(`Expected beta 1 or 2 access record`);
                 const timestamp = convertZonedTimestampToUtc(parsed.timestamp);
                 const record = { ...parsed, timestamp };
-                db.insertAccess(filename, nextLine++, record);
+                const category = isAccessRecordBeta2(parsed) ? parsed.category : undefined;
+                db.insertAccess(filename, nextLine++, record, category);
             } else if (recordType === 'networkActivity') {
                 const parsed = parseDomainRecordBeta2(obj, line);
                 const timeStamp = convertZonedTimestampToUtc(parsed.timeStamp);
@@ -56,7 +75,6 @@ export function importReportFile(text: string, filename: string, db: Database) {
                 const record = { ...parsed, timeStamp, firstTimeStamp };
                 db.insertDomain(filename, record.bundleID, record);
             }
-            
         } else {
             throw new Error(`Bad line, expected access record: ${line}`);
         }
@@ -76,6 +94,10 @@ function parseAccessRecord(obj: any, version: number, line: string): AccessRecor
         // beta 2
         if (!isAccessRecordBeta2(obj)) throw new Error(`Bad line, expected beta 2 access record: ${line}`);
         return obj;
+    } else if (version === 4) {
+        // beta 3
+        if (!isAccessRecordBeta3(obj)) throw new Error(`Bad line, expected beta 3 access record: ${line}`);
+        return obj;
     } else {
         throw new Error(`parseAccessRecord: Unsupported file version: ${version}`); 
     }
@@ -85,6 +107,12 @@ function parseAccessRecord(obj: any, version: number, line: string): AccessRecor
 function parseDomainRecordBeta2(obj: any, line: string): DomainRecordBeta2 {
     // {"domain":"mask.icloud.com","firstTimeStamp":"2021-06-18T05:55:10.417-05:00","domainType":2,"timeStamp":"2021-06-23T04:02:13.891-05:00","context":"","initiatedType":"AppInitiated","hits":7,"domainOwner":"","bundleID":"com.sonos.SonosController"}
     if (!isDomainRecordBeta2(obj)) throw new Error(`Bad line, expected beta 2 domain record: ${line}`);
+    return obj;
+}
+
+// deno-lint-ignore no-explicit-any
+function parseDomainRecordBeta3(obj: any, line: string): DomainRecordBeta3 {
+    if (!isDomainRecordBeta3(obj)) throw new Error(`Bad line, expected beta 3 domain record: ${line}`);
     return obj;
 }
 

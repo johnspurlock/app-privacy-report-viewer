@@ -11,7 +11,7 @@ const origin = `http://localhost:${port}`;
 console.log(`HTTP webserver running.  Access it at: ${origin}/`);
 
 const dbName = 'reports.db';
-const FILENAME = '[a-zA-Z0-9-]+';
+const FILENAME = '[a-zA-Z0-9_-]+';
 const DEBUG = false;
 
 for await (const request of server) {
@@ -68,7 +68,7 @@ function doWithDatabase(fn: (db: Database) => void) {
 
 function computeFilename(request: ServerRequest) {
     const filename = request.headers.get('x-filename') || '';
-    const m = new RegExp(`^(${FILENAME})\\.json$`).exec(filename);
+    const m = new RegExp(`^(${FILENAME})\\.(nd)?json$`).exec(filename);
     if (!m) throw new Error(`Bad filename: ${filename}`);
     return m[1];
 }
