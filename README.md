@@ -3,7 +3,7 @@ Local viewer for App Privacy Reports in iOS 15
 
 iOS 15 beta introduces a new feature in Privacy Settings called [Record App Activity](https://developer.apple.com/documentation/ios-ipados-release-notes/ios-ipados-15-beta-release-notes#Privacy).
 
-When enabled, you can save Save App Activity to dump the data to a json-like single file of the form `app-privacy-report-yyyy-mm-dd-hh-mm.json`
+When enabled, you can save Save App Activity to dump the data to a newline-delimited json file of the form `App_Privacy_Report_v4_<time>.ndjson`
 
 e.g.
 ```json
@@ -22,9 +22,9 @@ This tool is a simple app to import these files and display them in a web interf
 
 To get started:
  - Ensure `deno` is installed (it's [easy to install](https://deno.land/#installation))
- - Run `deno run --allow-net --allow-read=. --allow-write=. https://raw.githubusercontent.com/johnspurlock/app-privacy-report-viewer/v0.4/src/app.ts`
+ - Run `deno run --allow-net --allow-env --allow-read=.,``which deno`` --allow-write=. https://raw.githubusercontent.com/johnspurlock/app-privacy-report-viewer/v0.5/src/app.ts`
  - Open the locally-running web app at http://localhost:8015
- - Drag and drop your `app-privacy-report-yyyy-mm-dd-hh-mm.json` file into the web app
+ - Drag and drop your `App_Privacy_Report_v4_<time>.ndjson` file into the web app
 
 ---
 

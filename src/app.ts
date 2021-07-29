@@ -1,7 +1,8 @@
-import { serve, ServerRequest } from 'https://deno.land/std@0.101.0/http/server.ts';
-import { readAll } from 'https://deno.land/std@0.101.0/io/util.ts';
-import { resolve } from 'https://deno.land/std@0.101.0/path/mod.ts';
+import { serve, ServerRequest } from 'https://deno.land/std@0.103.0/http/server.ts';
+import { readAll } from 'https://deno.land/std@0.103.0/io/util.ts';
+import { resolve } from 'https://deno.land/std@0.103.0/path/mod.ts';
 import { Database } from './database.ts';
+import { computeBundleIconHref, computeBundleIconMarkup, handleBundleIconRequest } from './icons.ts';
 import { importReportFile } from './importer.ts';
 import { TIMESTAMP } from './model.ts';
 
@@ -31,6 +32,9 @@ for await (const request of server) {
                     request.respond({ status: 302, body: '', headers: new Headers({ 'Location': result.redirectHref }) });
                 }
             });
+        } else if (get && /^\/icon\/[A-Za-z0-9\.-]+$/.test(url.pathname)) {
+            const response = await handleBundleIconRequest(url.pathname.split('/').pop()!);
+            request.respond(response);
         } else if (post && url.pathname === '/') {
             const response = await handlePost(request);
             request.respond({ status: 200, body: JSON.stringify(response) });
@@ -53,6 +57,7 @@ interface ListItem {
     readonly href: string;
     readonly text: string;
     readonly selected: boolean;
+    readonly imageHref?: string;
 }
 
 //
@@ -94,7 +99,8 @@ async function handlePost(request: ServerRequest): Promise<Record<string, unknow
 function renderListHtml(items: ListItem[], lines: string[]) {
     lines.push('<ul>');
     for (const item of items) {
-        lines.push(`<li${item.selected ? ' class="selected"' : ''}><a href="${item.href}">${item.text}</a></li>`);
+        const anchor = `<a href="${item.href}">${item.text}</a>`;
+        lines.push(`<li${item.selected ? ' class="selected"' : ''}>${item.imageHref ? `<div class="flex"><img class="icon" src="${item.imageHref}" />${anchor}</div>` : anchor}</li>`);
     }
     lines.push('</ul>');
 }
@@ -152,8 +158,8 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
         renderListHtml(typeList, lines);
 
         const bundleIds = db.getBundleIds(filename);
-        const bundleIdList = bundleIds.map(v => ({ selected: bundleId === v, href: computeHref(url, 'bundleId', v), text: v}));
-        bundleIdList.unshift({ selected: bundleId === undefined, href: computeHref(url, 'bundleId'), text: '(all bundleIds)'});
+        const bundleIdList: ListItem[] = bundleIds.map(v => ({ selected: bundleId === v, href: computeHref(url, 'bundleId', v), text: v, imageHref: computeBundleIconHref(v) }));
+        bundleIdList.unshift({ selected: bundleId === undefined, href: computeHref(url, 'bundleId'), text: '(all bundleIds)' });
         renderListHtml(bundleIdList, lines);
     }
     lines.push('</div>');
@@ -164,24 +170,27 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
 
         lines.push('<table>');
         for (const date of [...commonSummariesByDate.keys()].sort().reverse()) {
-            lines.push(`<tr><td colspan="5"><h3><a href="${computeHref(url, 'date', date)}">${date}</a></h3></td></tr>`);
+            lines.push(`<tr><td colspan="6"><h3><a href="${computeHref(url, 'date', date)}">${date}</a></h3></td></tr>`);
 
             const showDomains = type === undefined || !type.startsWith('access');
             const commonSummariesForDate = commonSummariesByDate.get(date)!;
+            let lastBundleId: string | undefined;
             for (let i = 0; i < commonSummariesForDate.length; i++) {
                 const { accessSummary, domainSummary } = commonSummariesForDate[i];
                 if (accessSummary) {
-                    const type = 'access/' + accessSummary.stream;
+                    const { stream, bundleId, timestampStart, timestampEnd } = accessSummary;
+                    const type = 'access/' + stream;
                     let typeLink = `<a href="${computeHref(url, 'type', type)}">${type}</a>`;
-                    const bundleIdLink = `<a href="${computeHref(url, 'bundleId', accessSummary.bundleId)}">${accessSummary.bundleId}</a>`;
-                    const time = formatTimestamp(accessSummary.timestampStart);
-                    const timeEnd = accessSummary.timestampEnd ? formatTimestamp(accessSummary.timestampEnd) : '';
+                    const bundleIconMarkup = computeBundleIconMarkup(bundleId, lastBundleId);
+                    const bundleIdLink = `<a href="${computeHref(url, 'bundleId', bundleId)}">${bundleId}</a>`;
+                    const time = formatTimestamp(timestampStart);
+                    const timeEnd = timestampEnd ? formatTimestamp(timestampEnd) : '';
                     let count = 1;
                     while (timeEnd === '' && i < (commonSummariesForDate.length - 1)) {
                         // coalesce access duplicates for same time second
                         // there can be multiple address book accesses in the same second, for example
                         const { accessSummary: nextAccessSummary } = commonSummariesForDate[i + 1];
-                        if (nextAccessSummary && nextAccessSummary.stream === accessSummary.stream && nextAccessSummary.bundleId === accessSummary.bundleId && formatTimestamp(nextAccessSummary.timestampStart) === time) {
+                        if (nextAccessSummary && nextAccessSummary.stream === stream && nextAccessSummary.bundleId === bundleId && formatTimestamp(nextAccessSummary.timestampStart) === time) {
                             count++;
                             i++;
                         } else {
@@ -189,13 +198,17 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
                         }
                     }
                     if (count > 1) typeLink += ` x${count}`;
-                    lines.push(`<tr><td>${time}</td><td>${timeEnd}</td><td>${bundleIdLink}</td><td></td><td>${typeLink}</td></tr>`);
+                    lines.push(`<tr><td>${time}</td><td>${timeEnd}</td><td>${bundleIconMarkup}</td><td>${bundleIdLink}</td><td></td><td>${typeLink}</td></tr>`);
+                    lastBundleId = bundleId;
                 }
                 if (domainSummary && showDomains) {
-                    const bundleIdLink = `<a href="${computeHref(url, 'bundleId', domainSummary.bundleId)}">${domainSummary.bundleId}</a>`;
-                    const domainLocal = domainSummary.domain.endsWith('.local');
-                    const domainHtml = domainLocal ? domainSummary.domain : `<a class="domain" href="https://host.io/${domainSummary.domain}" target="_blank" rel="noreferrer noopener nofollow">${domainSummary.domain}</a>`;
-                    lines.push(`<tr><td>${formatTimestamp(domainSummary.timestamp)}</td><td></td><td>${bundleIdLink}</td><td>${domainSummary.hits}</td><td>${domainHtml}</td></tr>`);
+                    const { bundleId, domain, timestamp, hits } = domainSummary;
+                    const bundleIconMarkup = computeBundleIconMarkup(bundleId, lastBundleId);
+                    const bundleIdLink = `<a href="${computeHref(url, 'bundleId', bundleId)}">${bundleId}</a>`;
+                    const domainLocal = domain.endsWith('.local');
+                    const domainHtml = domainLocal ? domain : `<a class="domain" href="https://host.io/${domain}" target="_blank" rel="noreferrer noopener nofollow">${domain}</a>`;
+                    lines.push(`<tr><td>${formatTimestamp(timestamp)}</td><td></td><td>${bundleIconMarkup}</td><td>${bundleIdLink}</td><td>${hits}</td><td>${domainHtml}</td></tr>`);
+                    lastBundleId = bundleId;
                 }
             }
         }
@@ -302,6 +315,10 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
             background-color: #eeeeee;
         }
 
+        li {
+            padding: 0.25em 0.25em;
+        }
+
         #rhs {
             margin: 0 1rem;
         }
@@ -332,6 +349,20 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
 
         h3 {
             margin: 1rem 0;
+        }
+        
+        img.icon {
+            width: 15px;
+            height: 15px;
+        }
+
+        li img.icon {
+            padding-right: 0.25em;
+        }    
+
+        .flex {
+            display: flex;
+            align-items: center;
         }
 
     </style>
