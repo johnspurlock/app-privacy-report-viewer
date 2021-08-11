@@ -50,7 +50,8 @@ export function importReportFile(text: string, filename: string, db: Database) {
                 if (!isAccessRecordBeta3(parsed)) throw new Error(`Expected beta 3 access record`);
                 const timestamp = convertZonedTimestampToUtc(parsed.timeStamp);
                 const record = { ...parsed, timestamp };
-                db.insertAccess(filename, nextLine++, record, record.category);
+                const outOfProcess = record.outOfProcess !== undefined ? record.outOfProcess.toString() : undefined;
+                db.insertAccess(filename, nextLine++, record, record.category, outOfProcess);
             } else if (obj.type === 'networkActivity') {
                 const parsed = parseDomainRecordBeta3(obj, line);
                 const timeStamp = convertZonedTimestampToUtc(parsed.timeStamp);
@@ -67,7 +68,7 @@ export function importReportFile(text: string, filename: string, db: Database) {
                 const timestamp = convertZonedTimestampToUtc(parsed.timestamp);
                 const record = { ...parsed, timestamp };
                 const category = isAccessRecordBeta2(parsed) ? parsed.category : undefined;
-                db.insertAccess(filename, nextLine++, record, category);
+                db.insertAccess(filename, nextLine++, record, category, undefined);
             } else if (recordType === 'networkActivity') {
                 const parsed = parseDomainRecordBeta2(obj, line);
                 const timeStamp = convertZonedTimestampToUtc(parsed.timeStamp);

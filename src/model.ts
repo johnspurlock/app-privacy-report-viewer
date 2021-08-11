@@ -22,6 +22,7 @@ export interface AccessRecordBeta3 extends AccessRecordCommon {
     readonly timeStamp: string; // e.g. 2021-07-07T05:52:14.106-05:00
     readonly type: string; // e.g. access
     readonly category: string; // e.g. photos, contacts
+    readonly outOfProcess?: boolean;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -64,7 +65,7 @@ export function isAccessRecordBeta3(obj: any): obj is AccessRecordBeta3 {
         && typeof obj.type === 'string'
         && typeof obj.category === 'string'
         && typeof obj.identifier === 'string'
-        && Object.keys(obj).every(v => ['accessor', 'timeStamp', 'kind', 'type', 'category', 'identifier'].includes(v))
+        && Object.keys(obj).every(v => ['accessor', 'timeStamp', 'kind', 'type', 'category', 'identifier', 'outOfProcess'].includes(v))
 }
 
 export function checkAccessRecord(record: AccessRecord): string /* timestamp */ {

@@ -1,6 +1,6 @@
-import { serve, ServerRequest } from 'https://deno.land/std@0.103.0/http/server.ts';
-import { readAll } from 'https://deno.land/std@0.103.0/io/util.ts';
-import { resolve } from 'https://deno.land/std@0.103.0/path/mod.ts';
+import { serve, ServerRequest } from 'https://deno.land/std@0.104.0/http/server.ts';
+import { readAll } from 'https://deno.land/std@0.104.0/io/util.ts';
+import { resolve } from 'https://deno.land/std@0.104.0/path/mod.ts';
 import { Database } from './database.ts';
 import { computeBundleIconHref, computeBundleIconMarkup, handleBundleIconRequest } from './icons.ts';
 import { importReportFile } from './importer.ts';
