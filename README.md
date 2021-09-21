@@ -1,7 +1,7 @@
 # app-privacy-report-viewer
 Local viewer for App Privacy Reports in iOS 15
 
-iOS 15 beta introduces a new feature in Privacy Settings called [Record App Activity](https://developer.apple.com/documentation/ios-ipados-release-notes/ios-ipados-15-beta-release-notes#Privacy).
+iOS 15 beta introduces a new feature in Privacy Settings called [Record App Activity](https://developer.apple.com/documentation/ios-ipados-release-notes/ios-ipados-15-release-notes#Privacy).
 
 When enabled, you can save Save App Activity to dump the data to a newline-delimited json file of the form `App_Privacy_Report_v4_<time>.ndjson`
 
