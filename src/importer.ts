@@ -10,7 +10,7 @@ export function importReportFile(text: string, filename: string, db: Database) {
     let recordType = '';
     let recordTypeVersion = 0;
     let foundEndOfSection = false;
-    let nextLine = 1;
+    let lineNumber = 1;
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         if (line === '') continue;
@@ -51,13 +51,13 @@ export function importReportFile(text: string, filename: string, db: Database) {
                 const timestamp = convertZonedTimestampToUtc(parsed.timeStamp);
                 const record = { ...parsed, timestamp };
                 const outOfProcess = record.outOfProcess !== undefined ? record.outOfProcess.toString() : undefined;
-                db.insertAccess(filename, nextLine++, record, record.category, outOfProcess);
+                db.insertAccess(filename, lineNumber, record, record.category, outOfProcess);
             } else if (obj.type === 'networkActivity') {
                 const parsed = parseDomainRecordBeta3(obj, line);
                 const timeStamp = convertZonedTimestampToUtc(parsed.timeStamp);
                 const firstTimeStamp = convertZonedTimestampToUtc(parsed.firstTimeStamp);
                 const record = { ...parsed, timeStamp, firstTimeStamp };
-                db.insertDomain(filename, record.bundleID, record);
+                db.insertDomain(filename, lineNumber, record.bundleID, record);
             } else {
                 throw new Error(`Unexpected type: ${obj.type}`);
             }
@@ -68,17 +68,18 @@ export function importReportFile(text: string, filename: string, db: Database) {
                 const timestamp = convertZonedTimestampToUtc(parsed.timestamp);
                 const record = { ...parsed, timestamp };
                 const category = isAccessRecordBeta2(parsed) ? parsed.category : undefined;
-                db.insertAccess(filename, nextLine++, record, category, undefined);
+                db.insertAccess(filename, lineNumber, record, category, undefined);
             } else if (recordType === 'networkActivity') {
                 const parsed = parseDomainRecordBeta2(obj, line);
                 const timeStamp = convertZonedTimestampToUtc(parsed.timeStamp);
                 const firstTimeStamp = convertZonedTimestampToUtc(parsed.firstTimeStamp);
                 const record = { ...parsed, timeStamp, firstTimeStamp };
-                db.insertDomain(filename, record.bundleID, record);
+                db.insertDomain(filename, lineNumber, record.bundleID, record);
             }
         } else {
             throw new Error(`Bad line, expected access record: ${line}`);
         }
+        lineNumber++;
     }
 }
 
@@ -121,12 +122,13 @@ function importDomainRecordsBeta1(json: string, db: Database, filename: string) 
     const obj = JSON.parse(json);
     if (typeof obj !== 'object') throw new Error(`importDomainRecordsBeta1: expected object, found ${typeof obj}`);
     db.clearDomain(filename);
+    let lineNumber = 1;
     for (const bundleId of Object.keys(obj)) {
         const records = obj[bundleId];
         if (!Array.isArray(records)) throw new Error(`importDomainRecordsBeta1: expected records array, found ${typeof records}`);
         for (const record of records) {
             if (!isDomainRecordBeta1(record)) throw new Error(`importDomainRecordsBeta1: Bad record: ${JSON.stringify(record)}`);
-            db.insertDomain(filename, bundleId, record);
+            db.insertDomain(filename, lineNumber++, bundleId, record);
         }
     }
 }

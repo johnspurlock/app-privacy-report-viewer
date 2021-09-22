@@ -1,7 +1,7 @@
 import { DB } from 'https://deno.land/x/sqlite@v2.4.2/mod.ts';
 import { AccessRecord, checkAccessRecord, checkDomainRecord, DomainRecord, isAccessRecordBeta1, isDomainRecordBeta1 } from './model.ts';
 
-const VERSION = 3;
+const VERSION = 4;
 
 export class Database {
     private readonly _db: DB;
@@ -26,6 +26,7 @@ export class Database {
 
         this._db.query(`create table if not exists domain${VERSION}(
             filename text not null,
+            line integer not null,
             bundleId text not null,
             domain text not null,
             context text not null,
@@ -37,7 +38,7 @@ export class Database {
             hits integer not null,
             domainOwner string not null,
             firstTimeStamp string not null,
-            primary key (filename, bundleId, domain, context, initiatedType)) without rowid`);
+            primary key (filename, line)) without rowid`);
     }
 
     getFilenames(): string[] {
@@ -80,12 +81,12 @@ export class Database {
         this._db.query(`delete from domain${VERSION} where filename = ?`, [ filename ]);
     }
 
-    insertDomain(filename: string, bundleId: string, record: DomainRecord) {
+    insertDomain(filename: string, line: number, bundleId: string, record: DomainRecord) {
         checkDomainRecord(record);
         const effectiveUserId = isDomainRecordBeta1(record) ? record.effectiveUserId : undefined;
         const hasAppBundleName = isDomainRecordBeta1(record) ? record['hasApp.bundleName'] : undefined;
-        this._db.query(`insert into domain${VERSION}(filename, bundleId, domain, effectiveUserId, domainType, timeStamp, hasAppBundleName, context, hits, domainOwner, initiatedType, firstTimeStamp) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
-                    [filename, bundleId, record.domain, effectiveUserId, record.domainType, record.timeStamp, hasAppBundleName, record.context, record.hits, record.domainOwner, record.initiatedType, record.firstTimeStamp]);
+        this._db.query(`insert into domain${VERSION}(filename, line, bundleId, domain, effectiveUserId, domainType, timeStamp, hasAppBundleName, context, hits, domainOwner, initiatedType, firstTimeStamp) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+                    [filename, line, bundleId, record.domain, effectiveUserId, record.domainType, record.timeStamp, hasAppBundleName, record.context, record.hits, record.domainOwner, record.initiatedType, record.firstTimeStamp]);
         if (this._db.changes !== 1) throw new Error(`Failed to insert domain record`);
     }
 
