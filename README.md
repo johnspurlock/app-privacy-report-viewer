@@ -26,6 +26,8 @@ To get started:
  - Open the locally-running web app at http://localhost:8015
  - Drag and drop your `App_Privacy_Report_v4_<time>.ndjson` file into the web app
 
+If you encounter an error with the `deno run` command (which constrains to minimum os permissions) on your particular os/shell, try a less-restrictive alternate:
+ - ``deno run --allow-net --allow-env --allow-read --allow-write https://raw.githubusercontent.com/johnspurlock/app-privacy-report-viewer/v0.7/src/app.ts``
 ---
 
 Once imported, you can filter by filename, date, type of access, and bundleId (app).
