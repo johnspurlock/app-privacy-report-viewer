@@ -290,6 +290,7 @@ function handleHtml(db: Database, url: URL): string | { redirectHref: string } |
             margin: 0;
             padding: 0;
             font-size: smaller;
+            height: 100%;
         }
 
         a, a:visited {
